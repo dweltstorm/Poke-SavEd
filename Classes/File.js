@@ -29,19 +29,13 @@ Buffer.prototype.chunks = function (chunkSize) {
 exports.File = class {
   constructor(path) {
     this.bytes = fs.readFileSync(path);
+    return this.Save;
   }
   get Save() {
     const A = this.bytes.subarray(0, 57344); const B = this.bytes.subarray(57344, 114688);
     return A.subarray(-4, A.length) > B.subarray(-4, B.length) ? new SaveFile(A) : new SaveFile(B)
   }
 
-  getSection(id) {
-    return new Section(this.Save.sections[id])
-  }
-
-  get TRAINER_INFO() {
-    return new TRAINER_INFO(this.getSection(0))
-  }
 }
 
 class SaveFile {
@@ -49,6 +43,10 @@ class SaveFile {
     this.buf = buf;
     this.saveIndex = this.buf.subarray(-4, this.buf.length).readUint32LE()
     this.sections = this.buf.chunks(4096).shiftDown(this.saveIndex % 14)
+  }
+
+  getSection(id) {
+    return new Section(this.sections[id])
   }
 
 }
@@ -62,6 +60,23 @@ class Section {
     this.signature = this.buf.subarray(0x0FF8, 0x0FFC)
     this.saveIndex = this.buf.subarray(0x0FFC, 0x1000)
   }
+
+  calculateCheckSum() {
+    let sum = 0;
+    for (let i = 0; i < this.data.length; i += 4) {
+      sum += this.data.readUint32LE(i);
+    }
+    
+    sum = (sum >>> 16) + (sum & 0xffff);
+    sum = (sum + (sum >>> 16)) & 0xffff;
+    let buf = Buffer.alloc(2); buf.writeUInt16LE(sum)
+    return buf;
+  }
 }
 
-
+function readUInt32LittleEndian(buffer) {
+  return (buffer[0] |
+    (buffer[1] << 8) |
+    (buffer[2] << 16) |
+    (buffer[3] << 24)) >>> 0;
+}

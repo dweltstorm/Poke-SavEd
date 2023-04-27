@@ -25,7 +25,6 @@ Buffer.prototype.chunks = function (chunkSize) {
 	return result;
 }
 
-
 exports.File = class {
   constructor(path) {
     this.bytes = fs.readFileSync(path);
@@ -38,27 +37,28 @@ exports.File = class {
 
 }
 
+
 class SaveFile {
   constructor(buf) {
     this.buf = buf;
     this.saveIndex = this.buf.subarray(-4, this.buf.length).readUint32LE()
-    this.sections = this.buf.chunks(4096).shiftDown(this.saveIndex % 14)
+    this.sections = this.buf.chunks(4096).shiftDown(this.saveIndex % 14).map((x, i) => new types[i](x))
   }
 
+
   getSection(id) {
-    return new Section(this.sections[id])
+    return this.sections[id];
   }
 
 }
 
 class Section {
   constructor(buf) {
-    this.buf = buf;
-    this.data = this.buf.subarray(0, 3968);
-    this.sectionId = this.buf.subarray(0x0FF4, 0x0FF8)
-    this.checkSum = this.buf.subarray(0x0FF6, 0x0FF8)
-    this.signature = this.buf.subarray(0x0FF8, 0x0FFC)
-    this.saveIndex = this.buf.subarray(0x0FFC, 0x1000)
+    this.data = buf.subarray(0, 3968);
+    this.sectionId = buf.subarray(0x0FF4, 0x0FF8)
+    this.checkSum = buf.subarray(0x0FF6, 0x0FF8)
+    this.signature = buf.subarray(0x0FF8, 0x0FFC)
+    this.saveIndex = buf.subarray(0x0FFC, 0x1000)
   }
 
   calculateCheckSum() {
@@ -66,17 +66,60 @@ class Section {
     for (let i = 0; i < this.data.length; i += 4) {
       sum += this.data.readUint32LE(i);
     }
-    
-    sum = (sum >>> 16) + (sum & 0xffff);
-    sum = (sum + (sum >>> 16)) & 0xffff;
-    let buf = Buffer.alloc(2); buf.writeUInt16LE(sum)
+    sum = ((sum >>> 16) + (sum & 0xffff)) & 0xffff;
+    let buf = Buffer.alloc(2); buf.writeUint16LE(sum)
     return buf;
+  }
+
+  update() {
+    let data = Buffer.concat(Object.keys(this).slice(5).map(x => this[x]))
+    this.data = Buffer.concat([data, this.data.subarray(data.length, this.data.length)])
+    this.checkSum = this.calculateCheckSum();
   }
 }
 
-function readUInt32LittleEndian(buffer) {
-  return (buffer[0] |
-    (buffer[1] << 8) |
-    (buffer[2] << 16) |
-    (buffer[3] << 24)) >>> 0;
+exports.TRAINER_INFO = class extends Section {
+  constructor(section) {
+    super(section)
+    this._playerName = this.data.subarray(0x0000, 0x0007);
+    this._playerGender = this.data.subarray(0x0008, 0x0009);
+  }
+
+  get playerName() {
+    return decode(this._playerName);
+  }
+
+  set playerName(name) {
+    this._playerName = encode(name);
+
+  }
+
+  get playerGender() {
+    return this._playerGender == 0x01 ?  'M' :  'F'
+  }
+
+  set playerGender(gender) {
+    if (gender == 'M') {
+      this._playerGender = Buffer.from([0x01]);
+    } else if (gender == 'F') {
+      this._playerGender = Buffer.from([0x00]);
+    }
+  }
+}
+
+const types = {
+  0: exports.TRAINER_INFO,
+  1: Section,
+  2: Section,
+  3: Section,
+  4: Section,
+  5: Section,
+  6: Section,
+  7: Section,
+  8: Section,
+  9: Section,
+  10: Section,
+  11: Section,
+  12: Section,
+  13: Section,
 }

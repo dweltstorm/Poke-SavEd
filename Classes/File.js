@@ -13,6 +13,19 @@ Array.prototype.shiftDown = function(num) {
   return newArr;
 };
 
+Array.prototype.shiftUp = function(num) {
+  var newArr = this.slice();
+  for (var i = 0; i < this.length; i++) {
+    if (i + num < this.length) {
+      newArr[i + num] = this[i];
+    } else {
+      newArr[i + num - this.length] = this[i];
+    }
+  }
+  return newArr;
+};
+
+
 Buffer.prototype.chunks = function (chunkSize) {
 	var result = [];
 	var len = this.length;
@@ -25,16 +38,17 @@ Buffer.prototype.chunks = function (chunkSize) {
 	return result;
 }
 
-exports.File = class {
+class File {
   constructor(path) {
     this.bytes = fs.readFileSync(path);
-    return this.Save;
+    this.SaveA = new SaveFile(this.bytes.subarray(0, 57344)); this.SaveB = new SaveFile(this.bytes.subarray(57344, 114688));
+    this.LatestSave = this.SaveA.saveIndex > this.SaveB.saveIndex ? this.SaveA : this.SaveB
   }
-  get Save() {
-    const A = this.bytes.subarray(0, 57344); const B = this.bytes.subarray(57344, 114688);
-    return A.subarray(-4, A.length) > B.subarray(-4, B.length) ? new SaveFile(A) : new SaveFile(B)
+  
+  save_to_file() {
+  	return Buffer.concat([this.SaveA.data, this.SaveB.data])
   }
-
+  
 }
 
 
@@ -44,18 +58,24 @@ class SaveFile {
     this.saveIndex = this.buf.subarray(-4, this.buf.length).readUint32LE()
     this.sections = this.buf.chunks(4096).shiftDown(this.saveIndex % 14).map((x, i) => new types[i](x))
   }
-
-
-  getSection(id) {
-    return this.sections[id];
+  
+  get TRAINER_INFO() {
+  	this.sections[0].update();
+  	return this.sections[0];
   }
-
+  
+  get data() {
+  	return Buffer.concat(this.sections.map(x => {
+  		let pad = Buffer.alloc(4096 - (x.data.length + x.sectionId.length + x.checkSum.length + x.signature.length + x.saveIndex.length)).fill(0);
+  		return Buffer.concat([x.data, pad, x.sectionId, x.checkSum, x.signature, x.saveIndex])
+  	}).shiftUp(this.saveIndex % 14));
+  }
 }
 
 class Section {
   constructor(buf) {
     this.data = buf.subarray(0, 3968);
-    this.sectionId = buf.subarray(0x0FF4, 0x0FF8)
+    this.sectionId = buf.subarray(0x0FF4, 0x0FF6)
     this.checkSum = buf.subarray(0x0FF6, 0x0FF8)
     this.signature = buf.subarray(0x0FF8, 0x0FFC)
     this.saveIndex = buf.subarray(0x0FFC, 0x1000)
@@ -76,9 +96,14 @@ class Section {
     this.data = Buffer.concat([data, this.data.subarray(data.length, this.data.length)])
     this.checkSum = this.calculateCheckSum();
   }
+  
+  get total() {
+  	this.update();
+  	return Buffer.concat(Object.keys(this).slice(0, 5).map(x => this[x]));
+  }
 }
 
-exports.TRAINER_INFO = class extends Section {
+class TRAINER_INFO extends Section {
   constructor(section) {
     super(section)
     this._playerName = this.data.subarray(0x0000, 0x0007);
@@ -108,7 +133,7 @@ exports.TRAINER_INFO = class extends Section {
 }
 
 const types = {
-  0: exports.TRAINER_INFO,
+  0: TRAINER_INFO,
   1: Section,
   2: Section,
   3: Section,
@@ -123,3 +148,4 @@ const types = {
   12: Section,
   13: Section,
 }
+module.exports = { File };

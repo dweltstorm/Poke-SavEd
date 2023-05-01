@@ -25,6 +25,9 @@ Array.prototype.shiftUp = function(num) {
   return newArr;
 };
 
+String.prototype.pad = function(length, fill) {
+	return this.length > length ? String(this) : Array(length-this.length).fill(fill).concat(Array.from(this)).join('');
+}
 
 Buffer.prototype.chunks = function (chunkSize) {
 	var result = [];
@@ -37,22 +40,37 @@ Buffer.prototype.chunks = function (chunkSize) {
 
 	return result;
 }
+Buffer.prototype.writeBytes = function (bytes, offset=0) {
+	for(var i=0; i < bytes.length; i++) {
+		this[i+offset] = bytes[i]
+	}
+}
 
 class File {
-  #path;
+  #path; #LatestSave; #SaveA; #SaveB;
   constructor(path) {
     this.#path = path
     this.bytes = fs.readFileSync(path);
     this.SaveA = new SaveFile(this.bytes.subarray(0, 57344)); this.SaveB = new SaveFile(this.bytes.subarray(57344, 114688));
-    this.LatestSave = this.SaveA.saveIndex > this.SaveB.saveIndex ? this.SaveA : this.SaveB
+    if (this.SaveB.saveIndex == 1) {
+    	this.LatestSave = this.SaveB;
+    } else if (this.SaveA.saveIndex > this.SaveB.saveIndex) {
+    	this.LatestSave = this.SaveA
+    } else if (this.SaveA.saveIndex < this.SaveB.saveIndex) {
+    	this.LatestSave = this.SaveB;
+    } else {
+    	this.LatestSave = this.SaveB;
+    }
   }
 
   get TRAINER_INFO() {
+  	this.LatestSave.TRAINER_INFO.calculateCheckSum();
     return this.LatestSave.TRAINER_INFO;
   }
 
   save_to_file() {
-  	fs.writeFileSync('Pokemon - Emerald Version (USA, Europe).sav', Buffer.concat([this.SaveA.data, this.SaveB.data]))
+  	fs.writeFileSync(this.#path, Buffer.concat([this.SaveA.data, this.SaveB.data]))
+  	return fs.readFileSync(this.#path)
   }
   
 }
@@ -66,14 +84,13 @@ class SaveFile {
   }
   
   get TRAINER_INFO() {
-  	this.sections[0].update();
   	return this.sections[0];
   }
   
   get data() {
   	return Buffer.concat(this.sections.map(x => {
-  		return x.total;
-  	}).shiftUp(this.saveIndex % 14));
+  		return Buffer.concat([x.data, x.sectionId, x.checkSum, x.signature, x.saveIndex]);
+  	}));
   }
 }
 
@@ -81,62 +98,52 @@ class Section {
   constructor(buf) {
     this.data = buf.subarray(0, 3968);
     this.sectionId = buf.subarray(0x0FF4, 0x0FF6)
-    this.checkSum = buf.subarray(0x0FF6, 0x0FF8)
+    this.checkSum = this.calculateCheckSum();
     this.signature = buf.subarray(0x0FF8, 0x0FFC)
     this.saveIndex = buf.subarray(0x0FFC, 0x1000)
   }
 
   calculateCheckSum() {
     let sum = 0;
+    let data = Buffer.concat(Object.keys(this).map(x => this[x]))
     for (let i = 0; i < this.data.length; i += 4) {
       sum += this.data.readUint32LE(i);
     }
     sum = ((sum >>> 16) + (sum & 0xffff)) & 0xffff;
     let buf = Buffer.alloc(2); buf.writeUint16LE(sum)
-    return buf;
-  }
-
-  update() {
-    let data = Buffer.concat(Object.keys(this).slice(5).map(x => this[x]))
-    this.data = Buffer.concat([data, this.data.subarray(data.length, this.data.length)])
-    this.checkSum = this.calculateCheckSum();
-  }
-  
-  get total() {
-  	this.update();
-    let pad = Buffer.alloc(4096 - (this.data.length + this.sectionId.length + this.checkSum.length + this.signature.length + this.saveIndex.length)).fill(0);
-    var items = Object.keys(this).slice(0, 5).map(x => this[x]); items.splice(1, 0, pad);
-  	return Buffer.concat(items);
+    return buf
   }
 }
 
 class TRAINER_INFO extends Section {
   constructor(section) {
     super(section)
-    this._playerName = this.data.subarray(0x0000, 0x0007);
-    this._playerGender = this.data.subarray(0x0008, 0x0009);
   }
 
   get playerName() {
-    return decode(this._playerName);
+    return decode(this.data.subarray(0x00, 0x07));
   }
 
   set playerName(name) {
-    this._playerName = encode(name);
-
+    this.data.writeBytes(encode(name))
   }
-
+  
   get playerGender() {
-    return this._playerGender.readUint8() == 0 ?  'M' :  'F'
+  	return this.data[7] == 0 ? 'M' : 'F' 
+  }
+  
+  set playerGender(gender) {
+  	gender == 'M' ? this.data[7] = 0 : this.data[7] = 1
+  }
+  
+  get trainerId() {
+  	return this.data.readUint32LE(0x0A)
+  }
+  
+  set trainerId(newid) {
+  	this.data.writeUint32LE(0x0A)
   }
 
-  set playerGender(gender) {
-    if (gender == 'M') {
-      this._playerGender = Buffer.from([0x00]);
-    } else if (gender == 'F') {
-      this._playerGender = Buffer.from([0x01]);
-    }
-  }
 }
 
 const types = {

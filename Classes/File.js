@@ -39,14 +39,20 @@ Buffer.prototype.chunks = function (chunkSize) {
 }
 
 class File {
+  #path;
   constructor(path) {
+    this.#path = path
     this.bytes = fs.readFileSync(path);
     this.SaveA = new SaveFile(this.bytes.subarray(0, 57344)); this.SaveB = new SaveFile(this.bytes.subarray(57344, 114688));
     this.LatestSave = this.SaveA.saveIndex > this.SaveB.saveIndex ? this.SaveA : this.SaveB
   }
-  
+
+  get TRAINER_INFO() {
+    return this.LatestSave.TRAINER_INFO;
+  }
+
   save_to_file() {
-  	return Buffer.concat([this.SaveA.data, this.SaveB.data])
+  	fs.writeFileSync('Pokemon - Emerald Version (USA, Europe).sav', Buffer.concat([this.SaveA.data, this.SaveB.data]))
   }
   
 }
@@ -66,8 +72,7 @@ class SaveFile {
   
   get data() {
   	return Buffer.concat(this.sections.map(x => {
-  		let pad = Buffer.alloc(4096 - (x.data.length + x.sectionId.length + x.checkSum.length + x.signature.length + x.saveIndex.length)).fill(0);
-  		return Buffer.concat([x.data, pad, x.sectionId, x.checkSum, x.signature, x.saveIndex])
+  		return x.total;
   	}).shiftUp(this.saveIndex % 14));
   }
 }
@@ -99,7 +104,9 @@ class Section {
   
   get total() {
   	this.update();
-  	return Buffer.concat(Object.keys(this).slice(0, 5).map(x => this[x]));
+    let pad = Buffer.alloc(4096 - (this.data.length + this.sectionId.length + this.checkSum.length + this.signature.length + this.saveIndex.length)).fill(0);
+    var items = Object.keys(this).slice(0, 5).map(x => this[x]); items.splice(1, 0, pad);
+  	return Buffer.concat(items);
   }
 }
 
@@ -120,14 +127,14 @@ class TRAINER_INFO extends Section {
   }
 
   get playerGender() {
-    return this._playerGender == 0x01 ?  'M' :  'F'
+    return this._playerGender.readUint8() == 0 ?  'M' :  'F'
   }
 
   set playerGender(gender) {
     if (gender == 'M') {
-      this._playerGender = Buffer.from([0x01]);
-    } else if (gender == 'F') {
       this._playerGender = Buffer.from([0x00]);
+    } else if (gender == 'F') {
+      this._playerGender = Buffer.from([0x01]);
     }
   }
 }
